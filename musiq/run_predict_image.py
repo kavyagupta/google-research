@@ -17,7 +17,10 @@
 
 import collections
 import io
+import os
 from typing import Dict, Sequence, Text, TypeVar
+import cv2
+from tqdm import tqdm 
 
 from absl import app
 from absl import flags
@@ -26,7 +29,7 @@ import jax.numpy as jnp
 import ml_collections
 import numpy as np
 import tensorflow.compat.v1 as tf
-
+import rasterio as rio
 import musiq.model.multiscale_transformer as model_mod
 import musiq.model.preprocessing as pp_lib
 
@@ -37,6 +40,9 @@ flags.DEFINE_string('image_path', '', 'Path to input image.')
 flags.DEFINE_integer(
     'num_classes', 1,
     'Number of scores to predict. 10 for AVA and 1 for the other datasets.')
+
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.4)
+sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
 
 # Image preprocessing config.
 _PP_CONFIG = {
@@ -112,17 +118,39 @@ def prepare_image(image_path, pp_config):
     An array representing image patches and input position annotations.
   """
 
-  with tf.compat.v1.gfile.FastGFile(image_path, 'rb') as f:
-    encoded_str = f.read()
+#   with tf.compat.v1.gfile.FastGFile(image_path, 'rb') as f:
+#    encoded_str = f.read()
 
-  data = dict(image=tf.constant(encoded_str))
+#   data = dict(image=tf.constant(encoded_str))
+  
+  r = rio.open(image_path)
+  data = r.read()
+  
+  data = np.transpose(data,(1,2,0))
+  id = np.where(data != [0, 0, 0]) 
+
+  data = data[min(id[0]):max(id[0]),min(id[1]):max(id[1]),:]
+  size = data.shape
+  print(size)
+  data1 = data[:int(size[0]/2),:int(size[1]/2),:]
+  print(data1.shape)
+  data2 = data[int(size[0]/2):size[0],int(size[1]/2):size[1],:]
+  print(data2.shape)
+  #data = cv2.resize(data,(4096,4096),interpolation=cv2.INTER_AREA)
+  
   pp_fn = pp_lib.get_preprocess_fn(**pp_config)
-  data = pp_fn(data)
-  image = data['image']
+  data1 = pp_fn(data1)
+  image1 = data1#['image']
+    
+  data2 = pp_fn(data2)
+  image2 = data2
   # Shape (1, length, dim)
-  image = tf.expand_dims(image, axis=0)
-  image = image.numpy()
-  return image
+  image1 = tf.expand_dims(image1, axis=0)
+  image1 = image1.numpy()
+  
+  image2 = tf.expand_dims(image2, axis=0)
+  image2 = image2.numpy()
+  return image1,image2
 
 
 def run_model_single_image(model_config, num_classes, pp_config, params,
@@ -139,16 +167,26 @@ def run_model_single_image(model_config, num_classes, pp_config, params,
   Returns:
     Model prediction for MOS score.
   """
-  image = prepare_image(image_path, pp_config)
+  image1,image2 = prepare_image(image_path, pp_config)
   model = model_mod.Model.partial(
       num_classes=num_classes, train=False, **model_config)
-  logits = model.call(params, image)
+  logits = model.call(params, image1)
   preds = logits
   if num_classes > 1:
     preds = jax.nn.softmax(logits)
   score_values = jnp.arange(1, num_classes + 1, dtype=np.float32)
-  preds = jnp.sum(preds * score_values, axis=-1)
-  return preds[0]
+  preds1 = jnp.sum(preds * score_values, axis=-1)
+  
+  logits = model.call(params, image2)
+  preds = logits
+  if num_classes > 1:
+    preds = jax.nn.softmax(logits)
+  score_values = jnp.arange(1, num_classes + 1, dtype=np.float32)
+  preds2 = jnp.sum(preds * score_values, axis=-1)
+  
+  pred = (preds1[0]+preds2[0])/2
+  
+  return preds
 
 
 def get_params_and_config(ckpt_path):
@@ -169,9 +207,13 @@ def get_params_and_config(ckpt_path):
 
 def main(_):
   model_config, pp_config, params = get_params_and_config(FLAGS.ckpt_path)
-  pred_mos = run_model_single_image(model_config, FLAGS.num_classes, pp_config,
-                                    params, FLAGS.image_path)
-  print('============== Precited MOS:', pred_mos)
+  fout = open('musiq/out.csv', 'w')
+  for filename in tqdm(os.listdir(FLAGS.image_path)):
+      f = os.path.join(FLAGS.image_path, filename)
+      pred_mos1 = run_model_single_image(model_config, FLAGS.num_classes, pp_config,params,f)
+      fout.write(f"{f},{pred_mos1}\n")
+  fout.close()
+
 
 
 if __name__ == '__main__':
