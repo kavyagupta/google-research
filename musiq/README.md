@@ -41,6 +41,8 @@ The folder contains the following checkpoints:
 python3 -m musiq.run_predict_image \
   --ckpt_path=/tmp/spaq_ckpt.npz \
   --image_path=/tmp/image.jpeg
+  
+ TF_CPP_MIN_LOG_LEVEL=0 python3 -m musiq.run_predict_image   --ckpt_path=musiq/checkpoints/spaq_ckpt.npz   --image_path=musiq/Residential_Properties_Annotations/rasters/
 ```
 
 ## Citation
