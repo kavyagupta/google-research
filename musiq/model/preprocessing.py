@@ -324,19 +324,21 @@ def get_preprocess_fn(**preprocessing_kwargs):
     """The preprocessing function that is returned."""
 
     # Validate input
-    if not isinstance(data, dict) or 'image' not in data:
-      raise ValueError('Argument `data` must be a dictionary, '
-                       'not %s' % str(type(data)))
+    # if not isinstance(data, dict) or 'image' not in data:
+    #   raise ValueError('Argument `data` must be a dictionary, '
+    #                    'not %s' % str(type(data)))
 
     # Apply all the individual steps in sequence.
-    logging.info('Data before pre-processing:\n%s', data)
-    image = data['image']
-    image = decode_image(image)
+    #logging.info('Data before pre-processing:\n%s', data)
+    #image = data['image']
+    #image = decode_image(image)[:, :, :3]
+    image = data
     image = normalize_value_range(image)
     image = get_multiscale_patches(image, **preprocessing_kwargs)
 
-    data['image'] = image
-    logging.info('Data after pre-processing:\n%s', data)
+    #data['image'] = image
+    data = image
+    #logging.info('Data after pre-processing:\n%s', data)
     return data
 
   return _preprocess_fn
